@@ -680,7 +680,8 @@ function applyTheme(){
 //  카드 생성
 // ════════════════════════════════════
 function resizeStage(){
-  const dims=getStageDims(names.length);
+  // 20명 초과 시 20명만 추려서 보여주므로 스테이지 크기는 최대 20명 기준(800x600)으로 고정
+  const dims=getStageDims(Math.min(names.length, 20));
   if(SW===dims.w && SH===dims.h) return; // 변화없음
   // globals 업데이트
   SW=dims.w; SH=dims.h;
@@ -714,7 +715,14 @@ function createCards(){
   scene.innerHTML=''; cards=[];
   const th=THEMES[currentTheme];
   const groundY=SH-GROUND_OFFSET;
-  names.forEach(name=>{
+  
+  // 20명이 넘으면 랜덤으로 20명만 선택
+  let displayNames = names;
+  if(names.length > 20){
+    displayNames = [...names].sort(() => Math.random() - 0.5).slice(0, 20);
+  }
+
+  displayNames.forEach(name=>{
     const el=document.createElement('div');
     el.className='name-card';
     const t=th.card;
