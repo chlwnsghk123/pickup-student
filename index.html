@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>발표자 추첨기</title>
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
@@ -22,6 +22,7 @@ html, body {
   box-shadow:0 10px 50px rgba(0,0,0,0.7);
   border-radius:14px;
   flex-shrink:0;
+  transform-origin: center center; /* 모바일 스케일링 기준점 */
 }
 #bg-canvas { position:absolute; inset:0; z-index:0; }
 #scene      { position:absolute; inset:0; z-index:2; pointer-events:none; }
@@ -215,6 +216,13 @@ html, body {
 #stop-btn:hover { transform:scale(1.05); }
 #stop-btn:active { transform:scale(0.96); }
 #stop-btn:disabled { opacity:0.35; pointer-events:none; cursor:default; }
+  
+  /* 모바일 대응 */
+  @media (max-width: 600px) {
+    #stop-btn, #reset-btn { padding: 10px 24px; font-size: 16px; }
+    #ui { bottom: 10px; }
+  }
+
 #reset-btn {
   font-family:'Black Han Sans',sans-serif; font-size:18px;
   padding:12px 38px;
@@ -317,9 +325,7 @@ html, body {
     <button id="stop-btn">✋ 멈춰!</button>
     <button id="reset-btn">🔄 다시</button>
   </div>
-  <div id="theme-label">🌆 도심</div>
   <button id="edit-btn">📋 명단 편집</button>
-  <div id="student-count-badge" style="position:absolute;bottom:48px;right:8px;background:rgba(0,0,0,0.5);color:rgba(255,255,255,0.7);font-size:11px;padding:3px 8px;border-radius:8px;pointer-events:none;z-index:20;"></div>
 
   <div id="result-panel">
     <div id="result-label">🎯 오늘의 발표자</div>
@@ -517,8 +523,7 @@ const GROUND_OFFSET=70;
 const DEFAULT_NAMES=[
   "김민준","이서연","박지호","최수아","정예준",
   "강하은","윤도현","임지수","한민서","오준혁",
-  "신예은","류성민","배나연","조현우","허서윤",
-  "남기현","송다은","문재원","양지원","전하늘"
+  "신예은","류성민","배나연","조현우","허서윤"
 ];
 
 const WALK_LINES_EARLY=[
@@ -558,26 +563,36 @@ const THEMES=[
     const sky=ctx.createLinearGradient(0,0,0,H*.6); sky.addColorStop(0,'#3a7cc4'); sky.addColorStop(1,'#90c8e8');
     ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
     const cloud=cloudFn(ctx);
-    cloud(100,55,32); cloud(290,44,26); cloud(570,50,38); cloud(720,60,28);
+    cloud(W*0.15,55,32); cloud(W*0.35,44,26); cloud(W*0.65,50,38); cloud(W*0.85,60,28);
     ctx.fillStyle='#FFD700'; ctx.beginPath(); ctx.arc(W-90,52,26,0,Math.PI*2); ctx.fill();
-    const blds=[{x:0,w:78,h:H*.54,c:'#3d4d65'},{x:73,w:58,h:H*.39,c:'#4e5f75'},{x:126,w:98,h:H*.62,c:'#303d52'},{x:218,w:52,h:H*.36,c:'#566070'},{x:264,w:112,h:H*.70,c:'#283040'},{x:370,w:78,h:H*.49,c:'#445062'},{x:442,w:48,h:H*.33,c:'#60708a'},{x:W-285,w:88,h:H*.64,c:'#303d52'},{x:W-202,w:58,h:H*.44,c:'#4e5f75'},{x:W-148,w:102,h:H*.72,c:'#243040'},{x:W-52,w:52,h:H*.46,c:'#3d4d65'}];
-    blds.forEach(b=>{
-      ctx.fillStyle=b.c; ctx.fillRect(b.x,H-b.h,b.w,b.h);
-      ctx.fillStyle='rgba(255,255,255,0.07)'; ctx.fillRect(b.x,H-b.h,4,b.h);
+    
+    // 빌딩 동적 생성 (화면 너비에 맞춰 꽉 채움)
+    const colors=['#3d4d65','#4e5f75','#303d52','#566070','#283040','#445062','#60708a'];
+    let bx=0;
+    while(bx<W){
+      const bw=40+Math.random()*70;
+      const bh=H*(0.3+Math.random()*0.45);
+      const c=colors[Math.floor(Math.random()*colors.length)];
+      ctx.fillStyle=c; ctx.fillRect(bx,H-bh,bw,bh);
+      ctx.fillStyle='rgba(255,255,255,0.07)'; ctx.fillRect(bx,H-bh,4,bh);
       ctx.fillStyle='rgba(255,240,150,0.72)';
-      for(let wy=H-b.h+14;wy<H-G-10;wy+=22) for(let wx=b.x+8;wx<b.x+b.w-10;wx+=16) if(Math.random()>.28) ctx.fillRect(wx,wy,9,12);
-    });
+      for(let wy=H-bh+14;wy<H-G-10;wy+=22) for(let wx=bx+8;wx<bx+bw-10;wx+=16) if(Math.random()>.3) ctx.fillRect(wx,wy,9,12);
+      bx+=bw-5; // 약간 겹치게
+    }
+
     ctx.fillStyle='#484848'; ctx.fillRect(0,H-G,W,G);
     ctx.fillStyle='#d4b800'; ctx.fillRect(0,H-G,W,3);
     ctx.setLineDash([36,28]); ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=2.5;
     ctx.beginPath(); ctx.moveTo(0,H-G/2); ctx.lineTo(W,H-G/2); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle='#7a7a7a'; ctx.fillRect(0,H-G,W,11);
-    [130,330,530,710].forEach(lx=>{
+    
+    // 가로등 (상대 좌표)
+    for(let lx=W*0.15; lx<W; lx+=W*0.25){
       ctx.strokeStyle='#bbb'; ctx.lineWidth=3;
       ctx.beginPath(); ctx.moveTo(lx,H-G); ctx.lineTo(lx,H-G-88); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(lx,H-G-88); ctx.lineTo(lx+17,H-G-96); ctx.stroke();
       ctx.fillStyle='#FFE030'; ctx.beginPath(); ctx.arc(lx+17,H-G-98,5,0,Math.PI*2); ctx.fill();
-    });
+    }
    }
   },
   // 1: 교실
@@ -602,7 +617,7 @@ const THEMES=[
     ctx.fillStyle='rgba(255,255,255,0.15)'; for(let i=0;i<40;i++){ ctx.beginPath(); ctx.arc(90+Math.random()*(W-200),35+Math.random()*H*.35,Math.random()*3+1,0,Math.PI*2); ctx.fill(); }
     ctx.fillStyle='rgba(255,255,255,0.08)'; for(let i=0;i<6;i++) ctx.fillRect(100+i*100,H*.38-30,60,20);
     function window2(wx,wy,ww,wh){ ctx.fillStyle='rgba(135,206,235,0.6)'; ctx.fillRect(wx,wy,ww,wh); ctx.strokeStyle='#8B6914'; ctx.lineWidth=5; ctx.strokeRect(wx,wy,ww,wh); ctx.strokeStyle='rgba(139,105,20,0.8)'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(wx+ww/2,wy); ctx.lineTo(wx+ww/2,wy+wh); ctx.moveTo(wx,wy+wh/2); ctx.lineTo(wx+ww,wy+wh/2); ctx.stroke(); }
-    window2(W-160,H*.42,130,H*.22); window2(30,H*.42,130,H*.22);
+    window2(W-160,H*.42,130,H*.22); window2(40,H*.42,130,H*.22);
     ctx.fillStyle='#c8a060'; ctx.fillRect(W-150,60,120,H*.32);
     ctx.strokeStyle='#8B6914'; ctx.lineWidth=4; ctx.strokeRect(W-150,60,120,H*.32);
     ctx.fillStyle='rgba(255,240,200,0.8)'; ctx.fillRect(W-142,70,50,40); ctx.fillRect(W-142,120,50,35); ctx.fillRect(W-82,70,44,50);
@@ -645,7 +660,6 @@ let bgCtx   =bgCanvas.getContext('2d');
 function applyTheme(){
   const th=THEMES[currentTheme];
   bgCtx.clearRect(0,0,SW,SH); th.draw(bgCtx);
-  document.getElementById('theme-label').textContent=th.name;
   profTorso.style.background=th.prof.torso;
   profTorso.style.setProperty('--tie-color',th.prof.tie);
   profLA.style.background=th.prof.torso;
@@ -666,14 +680,6 @@ function applyTheme(){
 //  카드 생성
 // ════════════════════════════════════
 function resizeStage(){
-  // 뱃지 업데이트
-  const badge=document.getElementById('student-count-badge');
-  if(badge){
-    const dims20={w:800,h:600}, dims30={w:950,h:650}, dims50={w:1150,h:720};
-    const n=names.length;
-    const label = n<=20?`👥 ${n}명 (20명 기준)` : n<=30?`👥 ${n}명 (30명 기준)` : `👥 ${n}명 (50명 기준)`;
-    badge.textContent=label;
-  }
   const dims=getStageDims(names.length);
   if(SW===dims.w && SH===dims.h) return; // 변화없음
   // globals 업데이트
@@ -692,8 +698,19 @@ function resizeStage(){
   fwCtx=fwCvs.getContext('2d');
 }
 
+// 화면 크기에 맞춰 스테이지 스케일 조정 (모바일 최적화)
+function fitStage(){
+  const winW = window.innerWidth;
+  const winH = window.innerHeight;
+  const scale = Math.min(winW / SW, winH / SH, 1); // 화면보다 크면 축소, 작으면 1배
+  const stage = document.getElementById('stage');
+  stage.style.transform = `scale(${scale})`;
+}
+window.addEventListener('resize', fitStage);
+
 function createCards(){
   resizeStage(); // 학생 수에 따라 무대 자동 조정
+  fitStage();    // 스케일 적용
   scene.innerHTML=''; cards=[];
   const th=THEMES[currentTheme];
   const groundY=SH-GROUND_OFFSET;
@@ -807,7 +824,17 @@ function pickCard(){
   const avail=cards.filter(c=>!c.caught);
   if(!avail.length) return null;
   const px=profX+50, py=SH-GROUND_OFFSET-80;
-  const dists=avail.map(c=>({c,d:Math.hypot(c.x+c.w/2-px,c.y+c.h/2-py)}));
+  
+  // 방향에 맞는 후보군 필터링 (자연스러움을 위해)
+  // 오른쪽(1) 보고 있으면 교수보다 오른쪽에 있는 카드, 왼쪽(-1)이면 왼쪽에 있는 카드 우선
+  let candidates = avail.filter(c => {
+    const cx = c.x + c.w/2;
+    return (profDir === 1) ? (cx >= px) : (cx <= px);
+  });
+  // 만약 해당 방향에 카드가 하나도 없으면 전체 중에서 찾음
+  if(candidates.length === 0) candidates = avail;
+
+  const dists=candidates.map(c=>({c,d:Math.hypot(c.x+c.w/2-px,c.y+c.h/2-py)}));
   const sorted=dists.slice().sort((a,b)=>a.d-b.d);
   const nearest=sorted[0];
   const farthest=sorted[sorted.length-1];
@@ -855,6 +882,17 @@ function doJumpAndCatch(card){
   showBubble(isSuperman?'슈퍼 교수님 출동! 🦸':'잡아야지! 😈');
   playStop();
 
+  // [수정] 교수님 이동 목표 지점 계산 (자연스럽게 팔 뻗는 위치로)
+  // 오른쪽(1)을 볼 땐 카드의 왼쪽편에 서야 하고, 왼쪽(-1)을 볼 땐 카드의 오른쪽편에 서야 함
+  let targetX;
+  if(profDir === 1) {
+    targetX = card.x - 60; // 교수 너비 고려하여 왼쪽으로 이동
+  } else {
+    targetX = card.x + 10; // 오른쪽으로 이동
+  }
+  // 화면 밖으로 나가지 않게 보정
+  targetX = Math.max(15, Math.min(SW-110, targetX));
+
   // 0.5s 대기 후 카드 슬로우다운 + 잡기 시작
   setTimeout(()=>{
     // 카드 속도를 20%로 줄임 (완전 정지 말고 슬로우 모션)
@@ -867,8 +905,7 @@ function doJumpAndCatch(card){
       prof.classList.add(profDir===1?'superman-right':'superman-left');
       // 0.9s에 카드 위치로 이동
       setTimeout(()=>{
-        const tx=Math.max(15,Math.min(SW-110,card.x-25));
-        profX=tx; prof.style.left=profX+'px';
+        profX=targetX; prof.style.left=profX+'px';
         card.caught=true; card.el.classList.add('caught');
         pulseCard(card);
       },900);
@@ -889,15 +926,14 @@ function doJumpAndCatch(card){
     } else if(isGrab){
       // ── 손 뻗어 천천히 걸어가서 잡기 ──
       profBody.classList.add('reach-fwd');
-      const tx=Math.max(15,Math.min(SW-110,card.x-20));
-      const startX=profX, dist2=Math.abs(tx-startX);
+      const startX=profX, dist2=Math.abs(targetX-startX);
       const steps=Math.max(20, Math.round(dist2/2));
       let step=0;
       const iv=setInterval(()=>{
         step++;
         const t=step/steps;
         const ease=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
-        profX=startX+(tx-startX)*ease;
+        profX=startX+(targetX-startX)*ease;
         prof.style.left=profX+'px';
         if(step>=steps){
           clearInterval(iv);
@@ -920,8 +956,7 @@ function doJumpAndCatch(card){
       profBody.classList.add('reach-fwd');
       // 점프 정점에서 이동 + 잡기
       setTimeout(()=>{
-        const tx=Math.max(15,Math.min(SW-110,card.x-25));
-        profX=tx; prof.style.left=profX+'px';
+        profX=targetX; prof.style.left=profX+'px';
         card.caught=true; card.el.classList.add('caught');
         pulseCard(card);
         showBubble('잡았다!! 🎉');
