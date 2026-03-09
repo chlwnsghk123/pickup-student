@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>답변자 추첨기</title>
+<title>교수의 답변자 뽑기</title>
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -287,6 +287,35 @@ html, body {
 .menu-btns button:first-child { background: #3498db; color: white; }
 .menu-btns button:last-child { background: #e74c3c; color: white; }
 .menu-btns button:hover { transform: scale(1.05); filter: brightness(1.1); }
+.menu-box #password-input {
+  display: block;
+  margin: 15px auto;
+  width: 220px;
+  padding: 12px;
+  font-size: 20px;
+  text-align: center;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: white;
+  border-radius: 8px;
+  letter-spacing: 5px;
+}
+.menu-box #password-submit {
+  font-family: 'Black Han Sans';
+  font-size: 20px;
+  padding: 12px 40px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  background: #27ae60;
+  color: white;
+  transition: transform 0.2s, background-color 0.2s;
+  margin-top: 10px;
+}
+.menu-box #password-submit:hover {
+  background-color: #2ecc71;
+  transform: scale(1.05);
+}
 </style>
 </head>
 <body>
@@ -327,10 +356,17 @@ html, body {
 <div id="start-screen">
   <div class="menu-box">
     <h1>🎓 답변자 추첨기</h1>
-    <p>반을 선택해주세요</p>
-    <div class="menu-btns">
-      <button onclick="startGame('A')">A반</button>
-      <button onclick="startGame('B')">B반</button>
+    <div id="password-section">
+      <p>비밀번호를 입력하세요</p>
+      <input type="password" id="password-input" autocomplete="off">
+      <button id="password-submit">입장</button>
+    </div>
+    <div id="class-section" style="display: none;">
+      <p>반을 선택해주세요</p>
+      <div class="menu-btns">
+        <button onclick="startGame('A')">A반</button>
+        <button onclick="startGame('B')">B반</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1162,6 +1198,24 @@ function burst(){
 // ════════════════════════════════════
 //  시작
 // ════════════════════════════════════
+// 비밀번호 처리
+document.getElementById('password-submit').addEventListener('click', () => {
+    const input = document.getElementById('password-input');
+    if (input.value === '0821') {
+        document.getElementById('password-section').style.display = 'none';
+        document.getElementById('class-section').style.display = 'block';
+    } else {
+        alert('비밀번호가 틀렸습니다.');
+        input.value = '';
+        input.focus();
+    }
+});
+document.getElementById('password-input').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        document.getElementById('password-submit').click();
+    }
+});
+
 function startGame(classChar){
   const filename = classChar + '.txt';
   fetch(filename).then(r => {
