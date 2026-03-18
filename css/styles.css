@@ -1,0 +1,310 @@
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  width:100%; height:100%;
+  overflow:hidden;
+  font-family:'Noto Sans KR',sans-serif;
+  user-select:none;
+  background:#111;
+  display:flex; align-items:center; justify-content:center;
+}
+#stage {
+  position:relative;
+  width:800px; height:600px; /* JS로 자동 조정 */
+  overflow:hidden;
+  box-shadow:0 10px 50px rgba(0,0,0,0.7);
+  border-radius:14px;
+  flex-shrink:0;
+  transform-origin: center center; /* 모바일 스케일링 기준점 */
+}
+#bg-canvas { position:absolute; inset:0; z-index:0; }
+#scene      { position:absolute; inset:0; z-index:2; pointer-events:none; }
+#fireworks  { position:absolute; inset:0; z-index:8; pointer-events:none; }
+
+/* ── 이름 카드 ── */
+.name-card {
+  position:absolute;
+  border-radius:22px;
+  padding:8px 16px;
+  font-size:16px;
+  font-weight:900;
+  white-space:nowrap;
+  z-index:3;
+}
+.name-card.caught { z-index:6; }
+
+/* ── 교수 ── */
+#professor {
+  position:absolute;
+  z-index:5;
+  width:100px;
+}
+#prof-body {
+  position:relative;
+  width:100px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  transform-origin:center top;
+}
+/* 얼굴: mix-blend-mode + 배경제거 느낌, 원형 클립 */
+#prof-face {
+  width:88px; height:88px;
+  border-radius:50%;
+  overflow:hidden;
+  position:relative; z-index:2;
+  flex-shrink:0;
+  box-shadow: 0 0 0 2.5px rgba(255,255,255,0.5), 0 4px 18px rgba(0,0,0,0.55);
+  background: transparent;
+}
+#prof-face img {
+  width:112%; height:112%;
+  object-fit:cover;
+  object-position:center 8%;
+  margin-left:-6%; margin-top:-3%;
+  display:block;
+  mix-blend-mode: multiply;
+  filter: contrast(1.08) saturate(1.1);
+}
+#prof-torso {
+  width:50px; height:44px;
+  border-radius:8px 8px 4px 4px;
+  margin-top:-8px;
+  position:relative; z-index:1;
+}
+#prof-torso::after {
+  content:'';
+  position:absolute;
+  top:7px; left:50%; transform:translateX(-50%);
+  width:10px; height:21px;
+  clip-path:polygon(30% 0%,70% 0%,85% 55%,50% 100%,15% 55%);
+  background:var(--tie-color,#e74c3c);
+}
+#prof-left-arm, #prof-right-arm {
+  position:absolute; top:9px;
+  width:13px; height:34px;
+  border-radius:7px;
+  transform-origin:top center;
+  transition:transform 0.4s cubic-bezier(0.34,1.56,0.64,1);
+}
+#prof-left-arm  { left:-12px;  transform:rotate(15deg); }
+#prof-right-arm { right:-12px; transform:rotate(-15deg); }
+#prof-left-arm::after, #prof-right-arm::after {
+  content:'✊';
+  position:absolute; bottom:-13px;
+  font-size:13px; left:50%; transform:translateX(-50%);
+}
+#prof-legs { display:flex; gap:6px; margin-top:2px; }
+.leg {
+  width:13px; height:28px;
+  border-radius:5px;
+  transform-origin:top center;
+  position:relative;
+}
+.leg::after {
+  content:'';
+  position:absolute;
+  bottom:-5px; left:-4px;
+  width:21px; height:8px;
+  border-radius:4px;
+  background:var(--shoe-color,#111);
+}
+.walk-right .leg.left  { animation:walkL 0.34s ease-in-out infinite alternate; }
+.walk-right .leg.right { animation:walkR 0.34s ease-in-out infinite alternate; }
+.walk-left  .leg.left  { animation:walkR 0.34s ease-in-out infinite alternate; }
+.walk-left  .leg.right { animation:walkL 0.34s ease-in-out infinite alternate; }
+@keyframes walkL { from{transform:rotate(-18deg)} to{transform:rotate(18deg)} }
+@keyframes walkR { from{transform:rotate(18deg)}  to{transform:rotate(-18deg)} }
+.stopped .leg { animation:none !important; transform:rotate(0deg) !important; }
+
+/* 팔 뻗기 */
+#prof-body.reach-fwd #prof-right-arm { transform:rotate(-118deg) !important; }
+/* 슈퍼맨 팔 */
+#prof-body.superman-arm #prof-right-arm { transform:rotate(-158deg) !important; transition:transform 0.3s ease !important; }
+#prof-body.superman-arm #prof-left-arm  { transform:rotate(28deg)  !important; transition:transform 0.3s ease !important; }
+
+/* 말풍선 */
+#speech-bubble {
+  position:absolute;
+  bottom:calc(100% + 8px);
+  left:50%;
+  transform:translateX(-50%);
+  background:white;
+  color:#222; font-size:13px; font-weight:800;
+  padding:8px 14px; border-radius:16px;
+  white-space:nowrap;
+  box-shadow:0 3px 10px rgba(0,0,0,0.2);
+  opacity:0; transition:opacity 0.3s;
+  pointer-events:none; z-index:10;
+  transform-origin:center bottom;
+}
+#speech-bubble::after {
+  content:'';
+  position:absolute;
+  bottom:-8px; left:50%; transform:translateX(-50%);
+  border:8px solid transparent;
+  border-top-color:white; border-bottom:none;
+}
+#speech-bubble.visible { opacity:1; }
+
+/* 점프 */
+@keyframes profJump {
+  0%   { transform:translateY(0); }
+  38%  { transform:translateY(-130px); }
+  100% { transform:translateY(0); }
+}
+#professor.jumping { animation:profJump 1.1s cubic-bezier(0.25,0.46,0.45,0.94) forwards; }
+
+/* 슈퍼맨 날기 */
+@keyframes profFlyRight {
+  0%   { transform:translateY(0) rotate(0deg); }
+  18%  { transform:translateY(-70px) rotate(-28deg); }
+  62%  { transform:translateY(-85px) rotate(-22deg); }
+  88%  { transform:translateY(-20px) rotate(-4deg); }
+  100% { transform:translateY(0) rotate(0deg); }
+}
+@keyframes profFlyLeft {
+  0%   { transform:translateY(0) rotate(0deg); }
+  18%  { transform:translateY(-70px) rotate(28deg); }
+  62%  { transform:translateY(-85px) rotate(22deg); }
+  88%  { transform:translateY(-20px) rotate(4deg); }
+  100% { transform:translateY(0) rotate(0deg); }
+}
+#professor.superman-right { animation:profFlyRight 1.8s cubic-bezier(0.4,0,0.2,1) forwards; }
+#professor.superman-left  { animation:profFlyLeft  1.8s cubic-bezier(0.4,0,0.2,1) forwards; }
+
+/* 카드 등장 */
+@keyframes cardFlyIn {
+  0%   { transform:scale(0.7) translateY(-20px); opacity:0.6; }
+  60%  { transform:scale(1.45) translateY(-5px); opacity:1; }
+  100% { transform:scale(1.25); opacity:1; }
+}
+.card-caught-anim { animation:cardFlyIn 0.8s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+
+/* 입장 애니메이션 */
+@keyframes enterFromLeft {
+  from { left:-120px; }
+  to   { left:var(--entry-target); }
+}
+@keyframes enterFromRight {
+  from { left:920px; }
+  to   { left:var(--entry-target); }
+}
+#professor.entering-left  { animation:enterFromLeft  2.2s cubic-bezier(0.25,0.46,0.45,0.94) forwards; }
+#professor.entering-right { animation:enterFromRight 2.2s cubic-bezier(0.25,0.46,0.45,0.94) forwards; }
+
+/* ── UI ── */
+#ui {
+  position:absolute;
+  bottom:16px; left:50%; transform:translateX(-50%);
+  z-index:20; display:flex; gap:10px; align-items:center;
+}
+#stop-btn {
+  font-family:'Black Han Sans',sans-serif; font-size:18px;
+  padding:12px 38px;
+  color:white; border:none; border-radius:50px; cursor:pointer;
+  transition:transform 0.1s, box-shadow 0.1s;
+  letter-spacing:2px;
+}
+#stop-btn:hover { transform:scale(1.05); }
+#stop-btn:active { transform:scale(0.96); }
+#stop-btn:disabled { opacity:0.35; pointer-events:none; cursor:default; }
+  
+  /* 모바일 대응 */
+  @media (max-width: 600px) {
+    #stop-btn, #reset-btn { padding: 10px 24px; font-size: 16px; }
+    #ui { bottom: 10px; }
+  }
+
+#reset-btn {
+  font-family:'Black Han Sans',sans-serif; font-size:18px;
+  padding:12px 38px;
+  border-radius:50px; cursor:pointer; display:none;
+  border:2px solid rgba(255,255,255,0.5);
+  background:rgba(60,180,100,0.85); color:white;
+  box-shadow:0 5px 18px rgba(40,160,80,0.5);
+  letter-spacing:2px;
+  transition:background 0.2s, transform 0.1s;
+}
+#reset-btn:hover { background:rgba(60,200,110,0.95); transform:scale(1.04); }
+/* 테마 표시 */
+#theme-label {
+  position:absolute; top:12px; left:14px;
+  font-size:12px; padding:7px 14px;
+  background:rgba(0,0,0,0.4); color:white;
+  border:1px solid rgba(255,255,255,0.18); border-radius:18px;
+  z-index:20; backdrop-filter:blur(4px);
+  font-weight:700;
+}
+
+/* ── 결과 패널 ── */
+#result-panel {
+  position:absolute; top:50%; left:50%;
+  transform:translate(-50%,-50%) scale(0);
+  border-radius:24px; padding:36px 60px;
+  text-align:center; z-index:25;
+  transition:transform 0.5s cubic-bezier(0.34,1.56,0.64,1);
+  backdrop-filter:blur(20px);
+  min-width:280px;
+}
+#result-panel.show { transform:translate(-50%,-50%) scale(1); }
+#result-label { font-size:13px; opacity:0.65; margin-bottom:10px; font-weight:700; letter-spacing:2px; }
+#result-name {
+  font-family:'Black Han Sans',sans-serif; font-size:48px;
+  margin-bottom:8px;
+}
+#result-sub { font-size:22px; opacity:0.9; }
+
+/* ── 시작 메뉴 ── */
+#start-screen {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.85);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(10px);
+}
+.menu-box {
+  text-align: center; color: white;
+  background: rgba(255,255,255,0.1);
+  padding: 40px 60px; border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.2);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+.menu-box h1 { font-family: 'Black Han Sans'; font-size: 40px; margin-bottom: 10px; }
+.menu-box p { font-size: 18px; opacity: 0.7; margin-bottom: 30px; }
+.menu-btns { display: flex; gap: 20px; justify-content: center; }
+.menu-btns button {
+  font-family: 'Black Han Sans'; font-size: 24px;
+  padding: 15px 40px; border: none; border-radius: 12px;
+  cursor: pointer; transition: transform 0.2s, background 0.2s;
+}
+.menu-btns button:first-child { background: #3498db; color: white; }
+.menu-btns button:last-child { background: #e74c3c; color: white; }
+.menu-btns button:hover { transform: scale(1.05); filter: brightness(1.1); }
+.menu-box #password-input {
+  display: block;
+  margin: 15px auto;
+  width: 220px;
+  padding: 12px;
+  font-size: 20px;
+  text-align: center;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: white;
+  border-radius: 8px;
+  letter-spacing: 5px;
+}
+.menu-box #password-submit {
+  font-family: 'Black Han Sans';
+  font-size: 20px;
+  padding: 12px 40px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  background: #27ae60;
+  color: white;
+  transition: transform 0.2s, background-color 0.2s;
+  margin-top: 10px;
+}
+.menu-box #password-submit:hover {
+  background-color: #2ecc71;
+  transform: scale(1.05);
+}
