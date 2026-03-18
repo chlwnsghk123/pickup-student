@@ -1,563 +1,670 @@
-# 구현 계획: 비행기 테마 + 해변 테마 추가
+# 리팩토링 계획: index.html 모듈 분리
 
-## 개요
-- 기존 도심 테마(THEMES[0])를 **주석 처리**하여 비활성화
-- 새 테마 2개 추가: **✈️ 비행기** (특수 입장), **🏖️ 해변** (일반 입장 + 복장 변경)
-- 기존 교실 테마는 유지
-- 최종 THEMES 배열: `[교실, 비행기, 해변]` (인덱스 0, 1, 2)
+## 현황 분석
+
+### 파일 현황
+- **index.html**: 1,499줄, CSS(~350줄) + HTML(~55줄) + JS(~1,075줄) 단일 파일
+- 6개의 서로 다른 관심사가 하나의 파일에 혼재
+
+### 현재 코드의 논리적 영역 (line 기준)
+
+| 영역 | 라인 범위 | 줄 수 | 내용 |
+|------|----------|-------|------|
+| CSS 전체 | 8~356 | ~348 | 캐릭터, 애니메이션, UI, 테마요소, 시작화면 |
+| HTML 바디 | 357~412 | ~55 | stage, professor, UI, start-screen DOM |
+| 오디오 시스템 | 413~577 | ~165 | Web Audio API, 효과음, BGM |
+| 테마 + 상수 | 579~815 | ~237 | THEMES 배열(draw 포함), 상태변수, DOM 참조 |
+| 게임 로직 | 816~1346 | ~530 | applyTheme, 카드물리, 교수이동, 입장, 캐치 |
+| 루프 + 이벤트 | 1347~1499 | ~152 | game loop, 버튼핸들러, 초기화, 시작화면 |
+
+### 핵심 의존 관계
+
+```
+startGame() → createCards() → resizeStage() → fitStage()
+           → applyTheme() → THEMES[n].draw(bgCtx)
+           → loop()        → moveCards() + moveProf()
+           → doEntrance()  → doAirplaneEntrance() (비행기 테마)
+
+stopBtn click → pickCard() → doJumpAndCatch(card)
+                            → pulseCard() + floatCardAboveProf()
+                            → showResult() → launchFireworks()
+
+resetBtn click → createCards() + applyTheme() + doEntrance()
+```
+
+### 공유 상태 (전역 변수)
+
+```
+SW, SH, GROUND_OFFSET         // 스테이지 크기
+names, cards                   // 학생 데이터
+profX, profDir, profSpeed      // 교수 위치/방향
+phase                          // 게임 상태머신
+currentTheme, walkCount        // 테마/걷기 카운트
+walkInterval, bubbleTimer, lateTimer  // 타이머 ID
+```
 
 ---
 
-## 작업 1: CSS 추가 — 비행기 요소 + 패러글라이딩 애니메이션
+## 모듈 분리 전략
 
-**위치**: `index.html` line 201 (`#professor.entering-right` 규칙 바로 뒤)
+### 설계 원칙
 
-아래 CSS를 `/* ── UI ── */` 주석(line 203) **바로 위**에 삽입:
+1. **ES Module (`import`/`export`)** 사용 — `<script type="module">`
+2. **공유 상태**는 `state.js`에 객체 하나로 집중 관리 → 각 모듈이 import하여 읽기/쓰기
+3. **DOM 참조**도 `state.js`에서 한 번만 쿼리 → 모든 모듈이 재사용
+4. **테마 데이터**는 JS 모듈로 분리, `draw()` 함수 포함
+5. **CSS**는 관심사별 파일 분리 (캐릭터, 애니메이션, UI, 시작화면)
+6. 기존 동작/타이밍 100% 유지 — 리팩토링 전후 동작 차이 없음
+
+---
+
+## 변경 후 디렉토리 트리
+
+```
+pickup-student/
+├── index.html              ← HTML 골격만 (~80줄)
+├── A.txt                   (기존 유지)
+├── B.txt                   (기존 유지)
+├── plan.md
+├── research.md
+│
+├── css/
+│   ├── base.css            ← 글로벌 리셋, #stage, #scene, canvas
+│   ├── professor.css       ← 교수 캐릭터 (#prof-*), 걷기/점프 애니메이션
+│   ├── cards.css           ← .name-card 스타일
+│   ├── ui.css              ← 버튼, 결과패널, 테마라벨, 비행기/캐노피
+│   └── start-screen.css    ← 시작화면 오버레이, 메뉴박스, 비밀번호 입력
+│
+└── js/
+    ├── state.js            ← 공유 상태 객체 + DOM 참조 초기화
+    ├── audio.js            ← Web Audio API (효과음 + BGM)
+    ├── themes.js           ← THEMES 배열 (draw 함수 포함) + applyTheme()
+    ├── cards.js            ← 카드 생성, 물리 이동, 피킹, 애니메이션
+    ├── professor.js        ← 교수 이동, 비주얼, 입장, 캐치 시퀀스
+    ├── fireworks.js        ← 불꽃놀이 파티클 시스템
+    └── main.js             ← 게임 루프, 이벤트 바인딩, 초기화, 시작화면
+```
+
+---
+
+## 각 파일의 역할과 내용
+
+### `index.html` (~80줄)
+
+HTML 골격만 남김. CSS link 5개 + `<script type="module">` 1개.
+
+```html
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>교수의 답변자 뽑기</title>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/professor.css">
+  <link rel="stylesheet" href="css/cards.css">
+  <link rel="stylesheet" href="css/ui.css">
+  <link rel="stylesheet" href="css/start-screen.css">
+</head>
+<body>
+  <div id="stage">
+    <canvas id="bg-canvas" width="800" height="600"></canvas>
+    <canvas id="fireworks" width="800" height="600"></canvas>
+    <div id="scene"></div>
+    <div id="airplane">✈️</div>
+
+    <div id="professor">
+      <div id="prof-body" class="walk-right">
+        <div id="speech-bubble"></div>
+        <div id="paraglide-canopy"></div>
+        <div id="prof-face">
+          <img id="prof-img" src="data:image/jpeg;base64,..." />
+        </div>
+        <div id="prof-torso">
+          <div id="prof-left-arm"></div>
+          <div id="prof-right-arm"></div>
+        </div>
+        <div id="prof-legs">
+          <div class="leg left"></div>
+          <div class="leg right"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="ui">
+      <button id="stop-btn">멈춰!</button>
+      <button id="reset-btn" style="display:none;">다시</button>
+    </div>
+    <div id="theme-label"></div>
+    <div id="result-panel">
+      <div id="result-label"></div>
+      <div id="result-name"></div>
+      <div id="result-sub"></div>
+    </div>
+  </div>
+
+  <div id="start-screen">
+    <!-- 메뉴박스 구조 동일 -->
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
+```
+
+---
+
+### `css/base.css` (~30줄)
 
 ```css
-/* ── 비행기 테마 ── */
-#airplane {
-  position:absolute;
-  font-size:60px;
-  z-index:4;
-  display:none;
-  filter:drop-shadow(0 4px 12px rgba(0,0,0,0.4));
-  transform:scaleX(-1);  /* 비행기를 왼쪽 방향으로 뒤집기 */
-}
-
-/* 패러글라이딩 캐노피 (교수 머리 위) */
-#paraglide-canopy {
-  position:absolute;
-  bottom:calc(100% + 5px);
-  left:50%; transform:translateX(-50%);
-  width:80px; height:35px;
-  background:radial-gradient(ellipse at center, #ff6b6b 0%, #ee5a24 50%, #c44569 100%);
-  border-radius:50% 50% 10% 10%;
-  opacity:0;
-  transition:opacity 0.3s;
-  z-index:6;
-  pointer-events:none;
-}
-#paraglide-canopy.visible { opacity:1; }
-/* 캐노피 → 교수 연결 줄 */
-#paraglide-canopy::before {
-  content:'';
-  position:absolute;
-  bottom:-12px; left:20%;
-  width:1px; height:14px;
-  background:rgba(0,0,0,0.5);
-}
-#paraglide-canopy::after {
-  content:'';
-  position:absolute;
-  bottom:-12px; right:20%;
-  width:1px; height:14px;
-  background:rgba(0,0,0,0.5);
-}
+/* 글로벌 리셋 + 스테이지 레이아웃 */
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { width:100%; height:100%; overflow:hidden; background:#111; ... }
+#stage { position:relative; overflow:hidden; border-radius:12px; ... }
+#bg-canvas, #fireworks { position:absolute; top:0; left:0; width:100%; height:100%; }
+#fireworks { z-index:30; pointer-events:none; }
+#scene { position:absolute; inset:0; z-index:2; }
 ```
 
-### 정확한 삽입 위치 (before/after 맵핑)
+현재 라인 9~29 해당.
 
-**현재 코드 (line 200~203)**:
+---
+
+### `css/professor.css` (~130줄)
+
+```css
+/* 교수 캐릭터 전체 */
+#professor { position:absolute; z-index:5; width:100px; ... }
+#prof-body { display:flex; flex-direction:column; ... }
+#prof-face { ... }
+#prof-torso { ... }
+#prof-torso::after { /* 넥타이 */ }
+#prof-left-arm, #prof-right-arm { ... }
+#prof-legs { ... }
+.leg { ... }
+
+/* 걷기 애니메이션 (@keyframes walkL, walkR) */
+/* 점프 애니메이션 (@keyframes profJump) */
+/* 슈퍼맨 비행 (@keyframes profFlyRight, profFlyLeft) */
+/* 입장 애니메이션 (@keyframes enterFromLeft, enterFromRight) */
+/* 말풍선 (#speech-bubble) */
+
+/* 상태 클래스 */
+.stopped .leg { ... }
+#prof-body.reach-fwd #prof-right-arm { ... }
+#prof-body.superman-arm { ... }
+.jumping { ... }
+.superman-right { ... }
+.superman-left { ... }
+.entering-left { ... }
+.entering-right { ... }
 ```
-#professor.entering-left  { animation:enterFromLeft  2.2s ... }
-#professor.entering-right { animation:enterFromRight 2.2s ... }
 
-/* ── UI ── */
+현재 라인 43~201 해당. 교수 캐릭터와 관련된 모든 CSS를 여기에 집중.
+
+---
+
+### `css/cards.css` (~15줄)
+
+```css
+/* 이름 카드 */
+.name-card { position:absolute; padding:10px 16px; border-radius:10px; ... }
+.name-card.caught { z-index:6; }
+
+/* 카드 캐치 애니메이션 */
+@keyframes cardFlyIn { ... }
+.card-caught-anim { animation:cardFlyIn 0.8s ... }
 ```
 
-**변경 후**:
-```
-#professor.entering-left  { animation:enterFromLeft  2.2s ... }
-#professor.entering-right { animation:enterFromRight 2.2s ... }
+현재 라인 31~41 + 183~188 해당.
 
-/* ── 비행기 테마 ── */
+---
+
+### `css/ui.css` (~100줄)
+
+```css
+/* 비행기/캐노피 테마 요소 */
 #airplane { ... }
 #paraglide-canopy { ... }
-...
 
-/* ── UI ── */
+/* 하단 버튼 UI */
+#ui { ... }
+#stop-btn { ... }
+#reset-btn { ... }
+@media (max-width:600px) { ... }
+
+/* 테마 라벨 */
+#theme-label { ... }
+
+/* 결과 패널 */
+#result-panel { ... }
+#result-panel.show { ... }
+#result-label { ... }
+#result-name { ... }
+#result-sub { ... }
 ```
+
+현재 라인 203~300 해당.
 
 ---
 
-## 작업 2: HTML 추가 — 비행기 + 캐노피 DOM 요소
+### `css/start-screen.css` (~55줄)
 
-### 2-1. 비행기 요소
-
-**위치**: `index.html` line 327, `<div id="scene"></div>` 바로 뒤
-
-**현재 코드 (line 325~328)**:
-```html
-  <canvas id="fireworks" width="800" height="600"></canvas>
-  <div id="scene"></div>
-
-  <div id="professor">
+```css
+/* 시작 오버레이 */
+#start-screen { position:fixed; inset:0; z-index:9999; ... }
+.menu-box { ... }
+.menu-box h1 { ... }
+.menu-btns button { ... }
+#password-input { ... }
+#password-submit { ... }
 ```
 
-**변경 후**:
-```html
-  <canvas id="fireworks" width="800" height="600"></canvas>
-  <div id="scene"></div>
-  <div id="airplane">✈️</div>
-
-  <div id="professor">
-```
-
-### 2-2. 패러글라이딩 캐노피 요소
-
-**위치**: `index.html` line 329, `<div id="speech-bubble"></div>` 바로 뒤, `#prof-body` 내부
-
-**현재 코드 (line 328~330)**:
-```html
-    <div id="prof-body" class="walk-right">
-      <div id="speech-bubble"></div>
-      <div id="prof-face">
-```
-
-**변경 후**:
-```html
-    <div id="prof-body" class="walk-right">
-      <div id="speech-bubble"></div>
-      <div id="paraglide-canopy"></div>
-      <div id="prof-face">
-```
+현재 라인 302~355 해당.
 
 ---
 
-## 작업 3: THEMES 배열 수정 — 도심 비활성화 + 새 테마 2개 추가
+### `js/state.js` (~60줄)
 
-**위치**: `index.html` line 577~656 (THEMES 배열 전체)
-
-### 3-1. 도심 테마 주석 처리
-
-**현재 코드 (line 577~629)**:
-```js
-const THEMES=[
-  // 0: 도심 낮
-  {name:'🌆 도심',
-   musicKey:'city',
-   ...
-  },
-  // 1: 교실
-  {name:'🏫 교실',
-```
-
-**변경 후**:
-```js
-const THEMES=[
-  /* // 0: 도심 낮 (비활성화)
-  {name:'🌆 도심',
-   musicKey:'city',
-   card:{bg:'rgba(20,35,60,0.92)',border:'2px solid rgba(120,180,255,0.75)',color:'#deeeff',shadow:'0 3px 16px rgba(0,0,50,0.45)'},
-   prof:{torso:'#2c3a5a',tie:'#e74c3c',leg:'#1e2840',shoe:'#111'},
-   stopBtn:{bg:'linear-gradient(135deg,#e74c3c,#a02010)',shadow:'0 5px 18px rgba(200,50,30,0.55)'},
-   result:{bg:'rgba(8,16,40,0.95)',border:'2px solid rgba(120,180,255,0.6)',nameGrad:'linear-gradient(135deg,#74b9ff,#a29bfe)',text:'#deeeff'},
-   modal:{bg:'#0a1428'},modalSave:'#2563eb',
-   draw(ctx){
-    ... (기존 코드 전체 주석 안에 유지)
-   }
-  },
-  */
-  // 0: 교실
-  {name:'🏫 교실',
-```
-
-### 3-2. 비행기 테마 추가
-
-교실 테마 닫는 `},` (line 656, `];` 바로 위) 뒤에 추가:
+모든 모듈이 공유하는 **단일 상태 객체** + **DOM 참조**.
 
 ```js
-  // 1: 비행기
-  {name:'✈️ 비행기',
-   musicKey:'city',
-   entranceMode:'airplane',
-   card:{bg:'rgba(10,20,50,0.90)',border:'2px solid rgba(100,200,255,0.7)',color:'#e0f0ff',shadow:'0 3px 16px rgba(0,30,80,0.5)'},
-   prof:{torso:'#1a3a5c',tie:'#e74c3c',leg:'#0f2840',shoe:'#0a0a0a'},
-   stopBtn:{bg:'linear-gradient(135deg,#2980b9,#1a5276)',shadow:'0 5px 18px rgba(40,120,180,0.55)'},
-   result:{bg:'rgba(5,15,40,0.96)',border:'2px solid rgba(100,200,255,0.6)',nameGrad:'linear-gradient(135deg,#74b9ff,#0984e3)',text:'#e0f0ff'},
-   modal:{bg:'#051028'},modalSave:'#2980b9',
-   draw(ctx){
-    const W=SW,H=SH,G=GROUND_OFFSET;
-    // 하늘 (높은 고도 느낌 — 진한 파랑 → 연한 파랑)
-    const sky=ctx.createLinearGradient(0,0,0,H-G);
-    sky.addColorStop(0,'#1a3a6c'); sky.addColorStop(0.4,'#4a8abf'); sky.addColorStop(1,'#87ceeb');
-    ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
-    // 구름 (많이, 3줄 배치)
-    const cloud=cloudFn(ctx);
-    cloud(W*0.08,80,28); cloud(W*0.22,45,35); cloud(W*0.4,65,40);
-    cloud(W*0.58,35,30); cloud(W*0.75,55,45); cloud(W*0.92,70,25);
-    cloud(W*0.15,140,22); cloud(W*0.5,160,28); cloud(W*0.82,130,32);
-    // 바닥 — 활주로 (어두운 회색)
-    ctx.fillStyle='#555'; ctx.fillRect(0,H-G,W,G);
-    ctx.fillStyle='#777'; ctx.fillRect(0,H-G,W,5);
-    // 활주로 중앙 점선
-    ctx.setLineDash([50,30]); ctx.strokeStyle='#fff'; ctx.lineWidth=3;
-    ctx.beginPath(); ctx.moveTo(0,H-G/2); ctx.lineTo(W,H-G/2); ctx.stroke(); ctx.setLineDash([]);
-    // 활주로 노란 가장자리선
-    ctx.strokeStyle='rgba(255,255,100,0.6)'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(0,H-G+8); ctx.lineTo(W,H-G+8); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0,H-4); ctx.lineTo(W,H-4); ctx.stroke();
-    // 활주로 바닥 조명 (양쪽 줄)
-    for(let lx=30; lx<W; lx+=80){
-      ctx.fillStyle='rgba(100,200,255,0.7)';
-      ctx.beginPath(); ctx.arc(lx,H-G+4,3,0,Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(lx,H-6,3,0,Math.PI*2); ctx.fill();
-    }
-   }
-  },
-```
+// ── 스테이지 크기 계산 ──
+export function getStageDims(count) {
+  if (count <= 20) return { w: 1000, h: 700 };
+  if (count <= 30) return { w: 1200, h: 800 };
+  return { w: 1600, h: 950 };
+}
 
-### 3-3. 해변 테마 추가
+// ── 공유 상태 ──
+export const state = {
+  SW: 1000,
+  SH: 700,
+  GROUND_OFFSET: 70,
 
-비행기 테마 닫는 `},` 바로 뒤에 추가:
+  names: [],
+  cards: [],
 
-```js
-  // 2: 해변
-  {name:'🏖️ 해변',
-   musicKey:'city',
-   card:{bg:'rgba(255,240,200,0.92)',border:'2px solid rgba(255,160,60,0.7)',color:'#3a2a10',shadow:'0 3px 16px rgba(120,80,20,0.4)'},
-   prof:{torso:'hawaiian',tie:'none',leg:'#c8a870',shoe:'#d4a050',
-         torsoStyle:'hawaiian-shirt', shortsColor:'#f0d090'},
-   stopBtn:{bg:'linear-gradient(135deg,#f39c12,#e67e22)',shadow:'0 5px 18px rgba(240,160,30,0.55)'},
-   result:{bg:'rgba(40,25,5,0.95)',border:'2px solid rgba(255,200,100,0.65)',nameGrad:'linear-gradient(135deg,#fdcb6e,#e17055)',text:'#fff8e0'},
-   modal:{bg:'#1a1000'},modalSave:'#f39c12',
-   draw(ctx){
-    const W=SW,H=SH,G=GROUND_OFFSET;
-    // 하늘
-    const sky=ctx.createLinearGradient(0,0,0,H*0.45);
-    sky.addColorStop(0,'#87ceeb'); sky.addColorStop(1,'#b8e6ff');
-    ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
-    // 태양 (글로우 포함)
-    ctx.fillStyle='#FFD700'; ctx.beginPath(); ctx.arc(W*0.82,60,35,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(255,215,0,0.2)'; ctx.beginPath(); ctx.arc(W*0.82,60,55,0,Math.PI*2); ctx.fill();
-    // 구름
-    const cloud=cloudFn(ctx);
-    cloud(W*0.15,50,30); cloud(W*0.45,40,36); cloud(W*0.7,55,28);
-    // 바다 (그라데이션)
-    const sea=ctx.createLinearGradient(0,H*0.4,0,H-G);
-    sea.addColorStop(0,'#1e90ff'); sea.addColorStop(0.5,'#4db8ff'); sea.addColorStop(1,'#87ceeb');
-    ctx.fillStyle=sea; ctx.fillRect(0,H*0.4,W,H-G-H*0.4);
-    // 파도 (사인파 물결선)
-    ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=2;
-    for(let wy=H*0.45; wy<H-G; wy+=30){
-      ctx.beginPath();
-      for(let wx=0; wx<W; wx+=5){
-        ctx.lineTo(wx, wy + Math.sin(wx*0.03 + wy*0.1)*6);
-      }
-      ctx.stroke();
-    }
-    // 모래사장 (바닥)
-    const sand=ctx.createLinearGradient(0,H-G-15,0,H);
-    sand.addColorStop(0,'#f4d68c'); sand.addColorStop(1,'#e8c06a');
-    ctx.fillStyle=sand; ctx.fillRect(0,H-G,W,G);
-    // 모래 질감 (랜덤 점)
-    ctx.fillStyle='rgba(200,160,80,0.3)';
-    for(let i=0;i<60;i++){
-      ctx.beginPath();
-      ctx.arc(Math.random()*W, H-G+Math.random()*G, Math.random()*2+0.5, 0, Math.PI*2);
-      ctx.fill();
-    }
-    // 야자수 (왼쪽) — 곡선 줄기 + 타원 잎 5장
-    const px=W*0.08, py=H-G;
-    ctx.strokeStyle='#8B6914'; ctx.lineWidth=8;
-    ctx.beginPath(); ctx.moveTo(px,py); ctx.quadraticCurveTo(px+15,py-80,px+5,py-140); ctx.stroke();
-    ctx.fillStyle='#228B22';
-    for(let a=-0.8;a<=0.8;a+=0.4){
-      ctx.save(); ctx.translate(px+5,py-140); ctx.rotate(a);
-      ctx.beginPath(); ctx.ellipse(0,-15,8,40,0,0,Math.PI*2); ctx.fill();
-      ctx.restore();
-    }
-    // 야자수 (오른쪽)
-    const px2=W*0.92, py2=H-G;
-    ctx.strokeStyle='#8B6914'; ctx.lineWidth=8;
-    ctx.beginPath(); ctx.moveTo(px2,py2); ctx.quadraticCurveTo(px2-15,py2-80,px2-5,py2-140); ctx.stroke();
-    ctx.fillStyle='#228B22';
-    for(let a=-0.8;a<=0.8;a+=0.4){
-      ctx.save(); ctx.translate(px2-5,py2-140); ctx.rotate(a);
-      ctx.beginPath(); ctx.ellipse(0,-15,8,40,0,0,Math.PI*2); ctx.fill();
-      ctx.restore();
-    }
-    // 비치 파라솔 — 막대 + 빨간/흰 줄무늬 반원
-    const ux=W*0.65, uy=H-G;
-    ctx.strokeStyle='#999'; ctx.lineWidth=4;
-    ctx.beginPath(); ctx.moveTo(ux,uy); ctx.lineTo(ux,uy-80); ctx.stroke();
-    ctx.fillStyle='#e74c3c';
-    ctx.beginPath(); ctx.arc(ux,uy-80,40,Math.PI,0); ctx.fill();
-    ctx.fillStyle='#fff';
-    ctx.beginPath(); ctx.moveTo(ux-40,uy-80); ctx.arc(ux,uy-80,40,Math.PI,Math.PI+Math.PI/4); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(ux-40+53,uy-80); ctx.arc(ux,uy-80,40,Math.PI+Math.PI/2,Math.PI+Math.PI*3/4); ctx.closePath(); ctx.fill();
-   }
-  },
-```
+  profX: 0,
+  profDir: 1,
+  profSpeed: 2.2,
 
----
+  phase: 'entering',      // 'entering'|'ready'|'walking'|'stopping'|'jumping'|'done'
+  currentTheme: 0,
+  walkCount: 0,
 
-## 작업 4: `applyTheme()` 함수 수정 — 해변 복장 분기
+  walkInterval: null,
+  bubbleTimer: null,
+  lateTimer: null,
+};
 
-**위치**: `index.html` line 685~701
+// ── 기본 이름 목록 ──
+export const DEFAULT_NAMES = [
+  '김민수','이서연','박지호','최유진','정하늘',
+  '강도윤','조수빈','윤태양','임서현','한지우',
+  '오민재','신예은','문준혁','배소율','류하린'
+];
 
-### 현재 코드 (전체):
-```js
-function applyTheme(){
-  const th=THEMES[currentTheme];
-  bgCtx.clearRect(0,0,SW,SH); th.draw(bgCtx);
-  profTorso.style.background=th.prof.torso;
-  profTorso.style.setProperty('--tie-color',th.prof.tie);
-  profLA.style.background=th.prof.torso;
-  profRA.style.background=th.prof.torso;
-  document.querySelectorAll('.leg').forEach(l=>{ l.style.background=th.prof.leg; l.style.setProperty('--shoe-color',th.prof.shoe); });
-  stopBtn.style.background=th.stopBtn.bg; stopBtn.style.boxShadow=th.stopBtn.shadow;
-  resultPanel.style.background=th.result.bg; resultPanel.style.border=th.result.border;
-  document.getElementById('result-name').style.background=th.result.nameGrad;
-  document.getElementById('result-name').style.webkitBackgroundClip='text';
-  document.getElementById('result-name').style.webkitTextFillColor='transparent';
-  document.getElementById('result-sub').style.color=th.result.text;
-  document.getElementById('result-label').style.color=th.result.text;
+// ── 대사 ──
+export const WALK_LINES_EARLY = [
+  '음... 누가 좋을까? 🤔', '어디 한번 볼까~',
+  '오늘의 주인공은...', '두근두근 🥁',
+  '다들 긴장되지? 😏', '자~ 집중!', '골라볼까~'
+];
+export const WALK_LINES_LATE = ['슬슬 정해야겠다!','이쯤에서!'];
+
+// ── DOM 참조 (DOMContentLoaded 이후 초기화) ──
+export const dom = {};
+
+export function initDOM() {
+  dom.stage       = document.getElementById('stage');
+  dom.prof        = document.getElementById('professor');
+  dom.profBody    = document.getElementById('prof-body');
+  dom.profTorso   = document.getElementById('prof-torso');
+  dom.profLA      = document.getElementById('prof-left-arm');
+  dom.profRA      = document.getElementById('prof-right-arm');
+  dom.bubble      = document.getElementById('speech-bubble');
+  dom.stopBtn     = document.getElementById('stop-btn');
+  dom.resetBtn    = document.getElementById('reset-btn');
+  dom.scene       = document.getElementById('scene');
+  dom.resultPanel = document.getElementById('result-panel');
+  dom.fwCanvas    = document.getElementById('fireworks');
+  dom.bgCanvas    = document.getElementById('bg-canvas');
+  dom.fwCtx       = dom.fwCanvas.getContext('2d');
+  dom.bgCtx       = dom.bgCanvas.getContext('2d');
+  dom.airplane    = document.getElementById('airplane');
+  dom.canopy      = document.getElementById('paraglide-canopy');
 }
 ```
 
-### 변경 후 코드 (전체 교체):
+**핵심 포인트**: 기존 전역 변수(`profX`, `phase`, `SW` 등)를 모두 `state` 객체로 통합. DOM 참조를 `dom` 객체로 통합. 모든 모듈이 `import { state, dom } from './state.js'`로 접근.
+
+---
+
+### `js/audio.js` (~165줄)
+
 ```js
-function applyTheme(){
-  const th=THEMES[currentTheme];
-  bgCtx.clearRect(0,0,SW,SH); th.draw(bgCtx);
+import { state } from './state.js';
 
-  // ── 교수 복장 리셋 (테마 전환 시 이전 스타일 잔존 방지) ──
-  profTorso.style.backgroundImage='';
-  profTorso.style.borderRadius='8px 8px 4px 4px';
-  document.querySelectorAll('.leg').forEach(l=>{
-    l.style.height='28px';
-    l.style.borderRadius='5px';
-  });
+let AC;
+let bgMusicNode, bgMusicGain, bgMusicActive = false;
 
-  if(th.prof.torsoStyle==='hawaiian-shirt'){
-    // ── 해변 복장: 하와이안 셔츠 + 반바지 ──
-    profTorso.style.background='#2196F3';
-    profTorso.style.backgroundImage=
-      'radial-gradient(circle 4px at 30% 30%, #ff6b6b 2px, transparent 3px),'+
-      'radial-gradient(circle 4px at 70% 60%, #ffd32a 2px, transparent 3px),'+
-      'radial-gradient(circle 4px at 50% 85%, #ff6b6b 2px, transparent 3px),'+
-      'radial-gradient(circle 3px at 15% 70%, #fff 1.5px, transparent 2px),'+
-      'radial-gradient(circle 3px at 85% 25%, #ffd32a 1.5px, transparent 2px)';
-    profTorso.style.borderRadius='6px 6px 2px 2px';
-    profTorso.style.setProperty('--tie-color','transparent');
-    profLA.style.background='#2196F3';
-    profRA.style.background='#2196F3';
-    document.querySelectorAll('.leg').forEach(l=>{
-      l.style.background=th.prof.shortsColor||'#f0d090';
-      l.style.height='20px';
-      l.style.setProperty('--shoe-color',th.prof.shoe);
-    });
+export function resumeAC() { ... }
+export function playTone(freq, type, dur, vol, delay) { ... }
+export function startSteps() { ... }
+export function stopSteps() { ... }
+export function playEntrance() { ... }
+export function playStop() { ... }
+export function playJump() { ... }
+export function playSuperman() { ... }
+export function playCatch() { ... }
+export function startBgMusic() { ... }
+export function stopBgMusic() { ... }
+
+// 내부 함수 (export 안 함)
+function startBgMusicCity(masterGain) { ... }
+function startBgMusicClassroom(masterGain) { ... }
+```
+
+현재 라인 413~577 그대로 이동. `AC`, `bgMusicNode` 등은 모듈 스코프 변수로 유지(외부 노출 불필요). `startBgMusic()`에서 `THEMES[state.currentTheme].musicKey`를 참조해야 하므로 themes를 dynamic import 또는 musicKey를 인자로 전달.
+
+**의존**: `state` (currentTheme 읽기)
+
+---
+
+### `js/themes.js` (~250줄)
+
+```js
+import { state, dom } from './state.js';
+
+// ── 구름 그리기 헬퍼 ──
+export function cloudFn(ctx) { ... }
+
+// ── 테마 배열 ──
+export const THEMES = [
+  // 0: 교실
+  { name: '🏫 교실', musicKey: 'classroom', draw(ctx) { ... }, ... },
+
+  // 1: 비행기
+  { name: '✈️ 비행기', musicKey: 'city', entranceMode: 'airplane', draw(ctx) { ... }, ... },
+
+  // 2: 해변
+  { name: '🏖️ 해변', musicKey: 'city', draw(ctx) { ... }, ... },
+
+  /* // 도심 낮 (비활성화)
+  { name: '🌆 도심', ... },
+  */
+];
+
+// ── 테마 적용 ──
+export function applyTheme() {
+  const th = THEMES[state.currentTheme];
+  dom.bgCtx.clearRect(0, 0, state.SW, state.SH);
+  th.draw(dom.bgCtx);
+
+  // 복장 리셋
+  dom.profTorso.style.backgroundImage = '';
+  dom.profTorso.style.borderRadius = '8px 8px 4px 4px';
+  document.querySelectorAll('.leg').forEach(l => { ... });
+
+  if (th.prof.torsoStyle === 'hawaiian-shirt') {
+    // 해변 복장
+    ...
   } else {
-    // ── 기본 복장 (교실, 비행기 등) ──
-    profTorso.style.background=th.prof.torso;
-    profTorso.style.setProperty('--tie-color',th.prof.tie);
-    profLA.style.background=th.prof.torso;
-    profRA.style.background=th.prof.torso;
-    document.querySelectorAll('.leg').forEach(l=>{
-      l.style.background=th.prof.leg;
-      l.style.setProperty('--shoe-color',th.prof.shoe);
-    });
+    // 기본 복장
+    ...
   }
 
-  stopBtn.style.background=th.stopBtn.bg; stopBtn.style.boxShadow=th.stopBtn.shadow;
-  resultPanel.style.background=th.result.bg; resultPanel.style.border=th.result.border;
-  document.getElementById('result-name').style.background=th.result.nameGrad;
-  document.getElementById('result-name').style.webkitBackgroundClip='text';
-  document.getElementById('result-name').style.webkitTextFillColor='transparent';
-  document.getElementById('result-sub').style.color=th.result.text;
-  document.getElementById('result-label').style.color=th.result.text;
+  // 버튼/결과패널 색상
+  dom.stopBtn.style.background = th.stopBtn.bg;
+  ...
 }
 ```
 
-### 변경 상세 (diff 수준):
-- `bgCtx.clearRect` 뒤에 **리셋 블록** 4줄 삽입
-- 기존 `profTorso.style.background=th.prof.torso;` ~ `forEach` 까지 4줄을 **if/else 블록**으로 교체
-- 하위 (`stopBtn` 이후) 코드는 동일
+`THEMES` 배열 내 `draw()` 함수들이 `state.SW`, `state.SH`, `state.GROUND_OFFSET`, `cloudFn`을 참조 → 같은 모듈 내이므로 문제 없음.
+
+**의존**: `state`, `dom`
 
 ---
 
-## 작업 5: `doEntrance()` 함수 수정 — 비행기 입장 분기
+### `js/cards.js` (~120줄)
 
-**위치**: `index.html` line 837
-
-### 현재 코드 (첫 3줄):
 ```js
-function doEntrance(){
-  phase='entering';
-  stopBtn.disabled=true;
+import { state, dom, getStageDims } from './state.js';
+import { THEMES } from './themes.js';
+
+// ── 스테이지 리사이즈 ──
+export function resizeStage() { ... }
+
+// ── 스테이지 피팅 (화면 맞춤) ──
+export function fitStage() { ... }
+
+// ── 카드 생성 ──
+export function createCards() { ... }
+
+// ── 카드 물리 이동 ──
+export function moveCards() { ... }
+
+// ── 카드 피킹 (가장 가까운 카드 선택) ──
+export function pickCard() { ... }
+
+// ── 카드 펄스 애니메이션 ──
+export function pulseCard(card) { ... }
+
+// ── 카드를 교수 위로 띄우기 ──
+export function floatCardAboveProf(card, tx) { ... }
+
+// ── 카드 속도 복원 ──
+export function restoreCardSpeeds() { ... }
 ```
 
-### 변경 후 (첫 부분에 분기 추가):
+**의존**: `state` (cards, SW, SH, profX, phase), `dom` (scene), `THEMES` (card 스타일 읽기)
+
+---
+
+### `js/professor.js` (~280줄)
+
+가장 큰 모듈. 교수 캐릭터의 모든 행동을 담당.
+
 ```js
-function doEntrance(){
-  const th=THEMES[currentTheme];
-  if(th.entranceMode==='airplane'){
+import { state, dom, WALK_LINES_EARLY, WALK_LINES_LATE } from './state.js';
+import { THEMES } from './themes.js';
+import { playEntrance, playStop, playJump, playSuperman, playCatch,
+         startSteps, stopSteps, startBgMusic, stopBgMusic } from './audio.js';
+import { pickCard, pulseCard, floatCardAboveProf, restoreCardSpeeds } from './cards.js';
+import { launchFireworks } from './fireworks.js';
+
+// ── 교수 이동 ──
+export function moveProf() { ... }
+
+// ── 방향 설정 ──
+export function setDir(d) { ... }
+
+// ── 비주얼 업데이트 (방향에 따른 CSS 클래스) ──
+export function updateProfVisual() { ... }
+
+// ── 말풍선 ──
+export function showBubble(text, dur) { ... }
+export function hideBubble() { ... }
+function pickWalkLine() { ... }
+export function startWalkBubbles() { ... }
+
+// ── 입장 애니메이션 ──
+export function doEntrance() {
+  const th = THEMES[state.currentTheme];
+  if (th.entranceMode === 'airplane') {
     doAirplaneEntrance();
     return;
   }
+  // 기존 좌우 입장 ...
+}
 
-  phase='entering';
-  stopBtn.disabled=true;
+function doAirplaneEntrance() { ... }
+
+// ── 결과 표시 ──
+export function showResult(card) { ... }
+
+// ── 캐치 시퀀스 (슈퍼맨/잡기/점프) ──
+export function doJumpAndCatch(card) { ... }
 ```
+
+**의존**: `state`, `dom`, `THEMES`, `audio.*`, `cards.*`, `fireworks.launchFireworks`
 
 ---
 
-## 작업 6: `doAirplaneEntrance()` 새 함수 추가
-
-**위치**: `doEntrance()` 함수 바로 위 (line 837 직전)에 삽입
+### `js/fireworks.js` (~55줄)
 
 ```js
-// ════════════════════════════════════
-//  비행기 테마 전용 입장
-// ════════════════════════════════════
-function doAirplaneEntrance(){
-  phase='entering';
-  stopBtn.disabled=true;
+import { state, dom } from './state.js';
 
-  const airplane=document.getElementById('airplane');
-  const canopy=document.getElementById('paraglide-canopy');
+let fwActive = false;
+let fwP = [];
 
-  // ── 1단계: 비행기가 오른쪽 바깥에서 날아와 오른쪽 상단에 멈춤 ──
-  airplane.style.display='block';
-  airplane.style.transition='none';
-  airplane.style.left=(SW+80)+'px';
-  airplane.style.top='40px';
+export function launchFireworks() { ... }
+function burst() { ... }
+```
 
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{
-    airplane.style.transition='left 2s cubic-bezier(0.25,0.46,0.45,0.94)';
-    airplane.style.left=(SW-160)+'px';
-  }));
+**의존**: `state` (SW, SH), `dom` (fwCtx, fwCanvas)
 
-  playEntrance();
+---
 
-  // 교수를 일단 화면 밖에 숨김
-  prof.style.left='-200px';
-  prof.classList.add('stopped');
-  profBody.classList.remove('walk-right','walk-left');
+### `js/main.js` (~80줄)
 
-  // ── 2단계 (2.2초 후): 교수가 비행기 위치에서 패러글라이딩 시작 ──
-  setTimeout(()=>{
-    const dropStartX=SW-180;
-    const dropStartY=60;
+앱의 진입점. 게임 루프 + 이벤트 바인딩 + 시작화면.
 
-    // 교수를 비행기 위치에 배치 (top 기준)
-    profX=dropStartX;
-    prof.style.left=profX+'px';
-    prof.style.bottom='auto';
-    prof.style.top=dropStartY+'px';
-    profDir=-1;
-    updateProfVisual();
+```js
+import { state, dom, initDOM, DEFAULT_NAMES } from './state.js';
+import { THEMES, applyTheme } from './themes.js';
+import { resumeAC } from './audio.js';
+import { createCards, moveCards } from './cards.js';
+import { moveProf, doEntrance, doJumpAndCatch, showBubble, hideBubble,
+         startWalkBubbles, showResult } from './professor.js';
+import { pickCard } from './cards.js';
 
-    // 캐노피 표시
-    canopy.classList.add('visible');
+// ── 게임 루프 ──
+function loop() {
+  if (state.phase === 'walking') { moveCards(); moveProf(); }
+  else if (['stopping','jumping','entering','ready'].includes(state.phase)) { moveCards(); }
+  requestAnimationFrame(loop);
+}
 
-    // ── 3단계: 대각선 하강 (왼쪽 아래로) ──
-    const targetX=SW*0.3;
-    const targetTop=SH-GROUND_OFFSET-140;
+// ── 초기화 ──
+document.addEventListener('DOMContentLoaded', () => {
+  initDOM();
 
-    prof.style.transition='left 2.8s cubic-bezier(0.3,0,0.2,1), top 2.8s cubic-bezier(0.4,0,0.6,1)';
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{
-      prof.style.left=targetX+'px';
-      prof.style.top=targetTop+'px';
-    }));
+  // 시작 화면 이벤트
+  document.getElementById('password-submit').addEventListener('click', () => { ... });
+  document.getElementById('password-input').addEventListener('keypress', (e) => { ... });
 
-    // 비행기는 0.8초 뒤 왼쪽으로 퇴장
-    setTimeout(()=>{
-      airplane.style.transition='left 3s linear';
-      airplane.style.left='-150px';
-    },800);
+  // 스톱 버튼
+  dom.stopBtn.addEventListener('click', () => {
+    if (state.phase === 'walking') {
+      state.phase = 'stopping';
+      const card = pickCard();
+      if (!card) { state.phase = 'walking'; return; }
+      doJumpAndCatch(card);
+    }
+  });
 
-    // ── 4단계 (3초 후): 착지 완료 ──
-    setTimeout(()=>{
-      prof.style.transition='';
-      prof.style.top='';
-      prof.style.bottom=(GROUND_OFFSET-2)+'px';
-      profX=targetX;
-      prof.style.left=profX+'px';
+  // 리셋 버튼
+  dom.resetBtn.addEventListener('click', () => { ... });
 
-      canopy.classList.remove('visible');
-      airplane.style.display='none';
-      prof.classList.remove('stopped');
+  // AudioContext resume
+  dom.stage.addEventListener('click', resumeAC, { once: true });
+});
 
-      profDir=1;
-      updateProfVisual();
-
-      phase='ready';
-      stopBtn.disabled=false;
-      stopBtn.style.display='block';
-      resetBtn.style.display='none';
-    },3000);
-  },2200);
+// ── 게임 시작 ──
+function startGame(classChar) {
+  fetch(classChar + '.txt')
+    .then(r => r.text())
+    .then(text => {
+      state.names = text.trim().split('\n').map(s => s.trim()).filter(Boolean);
+      state.currentTheme = Math.floor(Math.random() * THEMES.length);
+      createCards();
+      applyTheme();
+      loop();
+      doEntrance();
+    });
 }
 ```
 
-### 타이밍 상세:
-| 시점 | 동작 |
-|------|------|
-| 0ms | 비행기 화면 밖(SW+80)에서 출발, transition 시작 |
-| 0~2000ms | 비행기가 오른쪽 상단(SW-160, 40)으로 이동 |
-| 2200ms | 교수가 비행기 위치(SW-180, 60)에 나타남 + 캐노피 표시 |
-| 2200~5000ms | 교수 대각선 하강 (left:SW*0.3, top:바닥) |
-| 3000ms | 비행기 왼쪽(-150)으로 퇴장 시작 |
-| 5200ms | 착지 완료 → `phase='ready'`, 버튼 활성화 |
+**의존**: 모든 모듈 import
 
 ---
 
-## 작업 7: 리셋 핸들러에 비행기/캐노피 정리 코드 추가
+## 모듈 의존 관계도
 
-**위치**: `index.html` line 1145~1147 (resetBtn 핸들러 내부, `prof.classList.remove(...)` 뒤)
-
-### 현재 코드 (line 1143~1148):
-```js
-  prof.classList.remove('stopped','jumping','superman-right','superman-left');
-  profBody.classList.remove('reach-fwd','superman-arm','walk-right','walk-left');
-
-  hideBubble();
+```
+              state.js
+            ↗   ↑   ↖
+     audio.js  themes.js  fireworks.js
+         ↑       ↑            ↑
+         └── professor.js ────┘
+              ↑       ↑
+          cards.js    │
+              ↑       │
+              └── main.js
 ```
 
-### 변경 후:
-```js
-  prof.classList.remove('stopped','jumping','superman-right','superman-left');
-  profBody.classList.remove('reach-fwd','superman-arm','walk-right','walk-left');
-
-  // 비행기 테마 정리
-  document.getElementById('airplane').style.display='none';
-  document.getElementById('paraglide-canopy').classList.remove('visible');
-  // top 포지셔닝 리셋 (비행기 테마에서 top을 사용하므로)
-  prof.style.top='';
-  prof.style.bottom=(GROUND_OFFSET-2)+'px';
-
-  hideBubble();
+```
+main.js → state, themes, audio, cards, professor
+professor.js → state, themes, audio, cards, fireworks
+cards.js → state, themes
+themes.js → state
+audio.js → state
+fireworks.js → state
 ```
 
----
-
-## 수정 파일 요약 (총 7개 작업, 모두 index.html)
-
-| 작업 | 위치 (라인) | 변경 종류 | 설명 |
-|------|------------|----------|------|
-| 1 | ~line 202 (CSS) | 삽입 | `#airplane`, `#paraglide-canopy` 스타일 |
-| 2-1 | line 327 (HTML) | 삽입 | `<div id="airplane">✈️</div>` |
-| 2-2 | line 329 (HTML) | 삽입 | `<div id="paraglide-canopy"></div>` |
-| 3-1 | line 577~629 (JS) | 주석 처리 | 도심 테마 전체를 `/* ... */`로 감쌈 |
-| 3-2 | line 656 뒤 (JS) | 삽입 | 비행기 테마 객체 |
-| 3-3 | 비행기 뒤 (JS) | 삽입 | 해변 테마 객체 |
-| 4 | line 685~701 (JS) | 전체 교체 | `applyTheme()` — 해변 복장 분기 추가 |
-| 5 | line 837 (JS) | 삽입 | `doEntrance()` 상단에 비행기 분기 3줄 |
-| 6 | line 837 앞 (JS) | 삽입 | `doAirplaneEntrance()` 새 함수 (약 60줄) |
-| 7 | line 1145 (JS) | 삽입 | 리셋 시 비행기/캐노피 정리 4줄 |
+**순환 의존 없음** — 단방향 그래프.
 
 ---
 
-## 고려 사항 & 트레이드오프
+## 마이그레이션 순서
 
-1. **비행기 표현**: 이모지(✈️) + `scaleX(-1)` 반전 → 왼쪽을 향해 날아오는 모습. 캔버스 드로잉보다 간결하고 기존 코드 스타일(이모지 ✊ 사용)과 일관됨.
-2. **패러글라이딩**: CSS transition(left + top 동시)으로 대각선 하강 구현. `@keyframes` 대신 JS setTimeout 체인으로 단계별 제어 — 기존 코드의 `doJumpAndCatch()`와 동일한 패턴.
-3. **하와이안 셔츠**: CSS `radial-gradient` 5겹으로 꽃무늬 표현. 몸통이 50×44px로 작으므로 큰 점 5개면 충분한 시각적 차별화.
-4. **반바지**: `.leg` 높이를 28px → 20px로 줄여 표현. 신발(`::after`)은 유지.
-5. **넥타이 숨김**: `--tie-color: transparent` → `::after`의 clip-path는 유지되지만 투명하여 안 보임.
-6. **배경음악**: 둘 다 `musicKey:'city'` 사용. 추후 `'beach'`, `'airplane'` 키 추가 가능하지만 현재 스코프 밖.
-7. **비행기 입장 총 시간 ~5.2초**: 기존 입장(2.5초)보다 길지만, 비행기 등장 → 패러글라이딩 → 착지의 3단계 연출에 필요한 최소 시간.
-8. **스타일 리셋**: `applyTheme()`에 리셋 블록 추가 → 해변→교실 등 테마 전환 시 하와이안 셔츠 스타일이 잔존하지 않도록 보장.
+코드 이동 시 기존 동작을 깨뜨리지 않기 위해, 아래 순서로 진행:
+
+| 단계 | 작업 | 검증 기준 |
+|------|------|----------|
+| 1 | `css/` 폴더 생성, CSS를 5개 파일로 분리 | 브라우저에서 기존과 동일하게 렌더링 |
+| 2 | `js/state.js` 생성 — 상수, 상태, DOM 참조 | import 가능 확인 |
+| 3 | `js/audio.js` 생성 — 오디오 시스템 이동 | 효과음/BGM 정상 재생 |
+| 4 | `js/fireworks.js` 생성 — 불꽃놀이 이동 | 불꽃놀이 정상 동작 |
+| 5 | `js/themes.js` 생성 — THEMES + applyTheme 이동 | 테마 전환 정상 |
+| 6 | `js/cards.js` 생성 — 카드 관련 함수 이동 | 카드 생성/물리/피킹 정상 |
+| 7 | `js/professor.js` 생성 — 교수 관련 함수 이동 | 입장/캐치/말풍선 정상 |
+| 8 | `js/main.js` 생성 — 루프, 이벤트, 초기화 이동 | 전체 게임 플로우 정상 |
+| 9 | `index.html` 정리 — CSS link + script module만 남김 | 최종 통합 테스트 |
+
+---
+
+## 변경 전후 줄 수 비교
+
+| 파일 | 줄 수 (예상) |
+|------|-------------|
+| `index.html` | ~80 |
+| `css/base.css` | ~30 |
+| `css/professor.css` | ~130 |
+| `css/cards.css` | ~15 |
+| `css/ui.css` | ~100 |
+| `css/start-screen.css` | ~55 |
+| `js/state.js` | ~60 |
+| `js/audio.js` | ~165 |
+| `js/themes.js` | ~250 |
+| `js/cards.js` | ~120 |
+| `js/professor.js` | ~280 |
+| `js/fireworks.js` | ~55 |
+| `js/main.js` | ~80 |
+| **총계** | **~1,420** |
+
+기존 1,499줄 → 13개 파일 총 ~1,420줄. 코드 양은 거의 동일하지만 **각 파일이 200줄 이내**로 관리 가능.
+
+---
+
+## 주의 사항
+
+1. **`<script type="module">`**: ES 모듈은 `file://` 프로토콜에서 CORS 오류 발생 → 로컬 서버(`python -m http.server` 등) 필요. 현재 이미 서버에서 서빙 중이라면 문제 없음.
+2. **Base64 이미지**: `prof-img`의 대용량 base64 문자열은 `index.html`에 그대로 유지 (별도 이미지 파일로 추출하면 더 깔끔하지만 현재 스코프 밖).
+3. **전역 → 모듈 전환**: 기존 `var`/`let`/`const` 전역 변수가 모두 `state` 객체 속성으로 바뀜. 각 함수에서 `profX` → `state.profX` 식으로 수정 필요.
+4. **타이머 정리**: `walkInterval`, `bubbleTimer`, `lateTimer`는 `state`에 저장 → 리셋 시 모듈 경계 넘어서 clear 가능.
+5. **비활성화된 도심 테마**: 주석 처리된 채로 `themes.js`에 유지.
