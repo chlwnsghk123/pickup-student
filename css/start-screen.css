@@ -1,0 +1,54 @@
+/* ── 시작 메뉴 ── */
+#start-screen {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.85);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(10px);
+}
+.menu-box {
+  text-align: center; color: white;
+  background: rgba(255,255,255,0.1);
+  padding: 40px 60px; border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.2);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+.menu-box h1 { font-family: 'Black Han Sans'; font-size: 40px; margin-bottom: 10px; }
+.menu-box p { font-size: 18px; opacity: 0.7; margin-bottom: 30px; }
+.menu-btns { display: flex; gap: 20px; justify-content: center; }
+.menu-btns button {
+  font-family: 'Black Han Sans'; font-size: 24px;
+  padding: 15px 40px; border: none; border-radius: 12px;
+  cursor: pointer; transition: transform 0.2s, background 0.2s;
+}
+.menu-btns button:first-child { background: #3498db; color: white; }
+.menu-btns button:last-child { background: #e74c3c; color: white; }
+.menu-btns button:hover { transform: scale(1.05); filter: brightness(1.1); }
+.menu-box #password-input {
+  display: block;
+  margin: 15px auto;
+  width: 220px;
+  padding: 12px;
+  font-size: 20px;
+  text-align: center;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: white;
+  border-radius: 8px;
+  letter-spacing: 5px;
+}
+.menu-box #password-submit {
+  font-family: 'Black Han Sans';
+  font-size: 20px;
+  padding: 12px 40px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  background: #27ae60;
+  color: white;
+  transition: transform 0.2s, background-color 0.2s;
+  margin-top: 10px;
+}
+.menu-box #password-submit:hover {
+  background-color: #2ecc71;
+  transform: scale(1.05);
+}

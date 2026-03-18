@@ -1,0 +1,21 @@
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  width:100%; height:100%;
+  overflow:hidden;
+  font-family:'Noto Sans KR',sans-serif;
+  user-select:none;
+  background:#111;
+  display:flex; align-items:center; justify-content:center;
+}
+#stage {
+  position:relative;
+  width:800px; height:600px; /* JS로 자동 조정 */
+  overflow:hidden;
+  box-shadow:0 10px 50px rgba(0,0,0,0.7);
+  border-radius:14px;
+  flex-shrink:0;
+  transform-origin: center center; /* 모바일 스케일링 기준점 */
+}
+#bg-canvas { position:absolute; inset:0; z-index:0; }
+#scene      { position:absolute; inset:0; z-index:2; pointer-events:none; }
+#fireworks  { position:absolute; inset:0; z-index:8; pointer-events:none; }
